@@ -1,0 +1,1352 @@
+#+title: Emacs Plus Installation auf Apple Silicon macOS inklusive Daemon- und GUI-Start
+#+author: M365 Copilot
+#+language: de
+#+options: toc:3 num:t
+
+* Vorbemerkung
+
+Diese Anleitung beschreibt die Installation einer Emacs-Plus-Umgebung auf einem Apple-Silicon-Mac mit Homebrew unter =/opt/homebrew=.
+
+Sie ist bewusst als Installationsanleitung formuliert und endet mit einem vollständig überprüfbaren Start beider Betriebsarten:
+
+- direkter GUI-Start ohne Daemon
+- Start als benannter Daemon =power= plus GUI-/Terminal-Client via =emacsclient=
+
+Die eigentliche Emacs-Konfiguration, also der vollständige Inhalt von =early-init.el= und =init.el=, sollte separat dokumentiert werden. Diese Datei enthält aber alle Installations- und Startvoraussetzungen, damit Emacs bis zum finalen Start lauffähig ist.
+
+* 1. Bestehende Emacs-Konfiguration sichern
+
+** Installationsanweisung
+
+Vorhandene Emacs-Konfigurationen prüfen:
+
+#+begin_src shell
+ls -ld ~/.emacs ~/.emacs.d ~/.config/emacs 2>/dev/null
+#+end_src
+
+Backup-Verzeichnis anlegen:
+
+#+begin_src shell
+mkdir -p ~/emacs-backups
+BACKUP_DIR="$HOME/emacs-backups/emacs-backup-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+echo "$BACKUP_DIR"
+#+end_src
+
+Vorhandene Konfigurationen sichern:
+
+#+begin_src shell
+[ -e ~/.emacs ] && cp -a ~/.emacs "$BACKUP_DIR/"
+[ -e ~/.emacs.d ] && cp -a ~/.emacs.d "$BACKUP_DIR/"
+[ -e ~/.config/emacs ] && cp -a ~/.config/emacs "$BACKUP_DIR/"
+#+end_src
+
+Separate Konfigurationsverzeichnisse anlegen:
+
+#+begin_src shell
+mkdir -p ~/.config/emacs-minimal
+mkdir -p ~/.config/emacs-power
+#+end_src
+
+Minimal-Fallback-Konfiguration anlegen:
+
+#+begin_src shell
+cat > ~/.config/emacs-minimal/init.el <<'EOF'
+;;; init.el --- Minimal fallback Emacs config
+
+(setq inhibit-startup-screen t)
+
+(menu-bar-mode 1)
+(tool-bar-mode -1)
+(scroll-bar-mode -1)
+
+(setq make-backup-files nil)
+(setq auto-save-default nil)
+
+(message "Loaded minimal fallback Emacs config")
+EOF
+#+end_src
+
+Power-Config-Platzhalter anlegen:
+
+#+begin_src shell
+cat > ~/.config/emacs-power/init.el <<'EOF'
+;;; init.el --- Power-user Emacs config placeholder
+
+(setq inhibit-startup-screen t)
+
+(message "Loaded power-user Emacs config placeholder")
+EOF
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Es werden zwei getrennte Emacs-Konfigurationsverzeichnisse verwendet:
+
+#+begin_example
+~/.config/emacs-minimal
+~/.config/emacs-power
+#+end_example
+
+Damit kann die Power-User-Konfiguration getestet werden, ohne eine eventuell vorhandene Standardkonfiguration zu überschreiben. Im Fehlerfall kann Emacs weiterhin mit der Minimal-Konfiguration gestartet werden.
+
+** Überprüfen
+
+#+begin_src shell
+find "$BACKUP_DIR" -maxdepth 2 -print
+find ~/.config/emacs-minimal ~/.config/emacs-power -maxdepth 1 -type f -print
+#+end_src
+
+** Erwartete Ausgabe
+
+Mindestens:
+
+#+begin_example
+/Users/<user>/.config/emacs-minimal/init.el
+/Users/<user>/.config/emacs-power/init.el
+#+end_example
+
+Falls vorher bereits Emacs-Konfigurationen existierten, sollten diese zusätzlich im Backup-Verzeichnis erscheinen.
+
+* 2. Homebrew und Systemarchitektur prüfen
+
+** Installationsanweisung
+
+#+begin_src shell
+which brew
+brew --prefix
+uname -m
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Auf Apple Silicon sollte Homebrew normalerweise unter =/opt/homebrew= liegen. Auf Intel macOS ist der typische Homebrew-Prefix =/usr/local=.
+
+** Überprüfen
+
+#+begin_src shell
+brew --prefix
+uname -m
+#+end_src
+
+** Erwartete Ausgabe
+
+Apple Silicon:
+
+#+begin_example
+/opt/homebrew
+arm64
+#+end_example
+
+Intel macOS:
+
+#+begin_example
+/usr/local
+x86_64
+#+end_example
+
+* 3. Xcode Command Line Tools prüfen
+
+** Installationsanweisung
+
+#+begin_src shell
+xcode-select -p
+#+end_src
+
+Falls die Command Line Tools fehlen:
+
+#+begin_src shell
+xcode-select --install
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Die Xcode Command Line Tools stellen Compiler, SDKs, Header und weitere Build-Komponenten bereit. Sie werden für verschiedene Homebrew-Pakete und native Builds benötigt.
+
+** Überprüfen
+
+#+begin_src shell
+xcode-select -p
+#+end_src
+
+** Erwartete Ausgabe
+
+Typisch:
+
+#+begin_example
+/Library/Developer/CommandLineTools
+#+end_example
+
+* 4. Homebrew aktualisieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew update
+brew doctor
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+=brew doctor= muss nicht zwingend komplett ohne Warnungen sein. Kritisch wären jedoch Architektur-, PATH- oder Berechtigungsprobleme.
+
+** Überprüfen
+
+#+begin_src shell
+brew doctor
+#+end_src
+
+** Erwartete Ausgabe
+
+Optimal:
+
+#+begin_example
+Your system is ready to brew.
+#+end_example
+
+* 5. Emacs Plus GUI installieren
+
+** Installationsanweisung
+
+Emacs-Plus-Tap hinzufügen:
+
+#+begin_src shell
+brew tap d12frosted/emacs-plus
+#+end_src
+
+Falls Homebrew das Laden des Casks wegen eines nicht vertrauenswürdigen Drittanbieter-Taps verweigert:
+
+#+begin_src shell
+brew trust d12frosted/emacs-plus
+#+end_src
+
+Emacs Plus GUI-App installieren:
+
+#+begin_src shell
+brew install --cask emacs-plus
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Für dieses Setup wird die vorgebaute =emacs-plus-app=-Cask-Variante verwendet. Diese ist schneller und einfacher als ein Source-Build und genügt für das geplante Power-User-Setup.
+
+Unterschied Apple Silicon vs. Intel macOS:
+
+- Apple Silicon Homebrew-Prefix: =/opt/homebrew=
+- Intel Homebrew-Prefix: =/usr/local=
+- Die App selbst liegt typischerweise in beiden Fällen unter =/Applications/Emacs.app=
+
+** Überprüfen
+
+#+begin_src shell
+ls -ld /Applications/Emacs.app
+open -a Emacs
+which emacs
+which emacsclient
+emacs --version
+emacsclient --version
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+/Applications/Emacs.app
+emacs 30.2
+emacsclient 30.2
+#+end_example
+
+Die genaue Version kann abweichen.
+
+* 6. Emacs mit isolierten Konfigurationsverzeichnissen testen
+
+** Installationsanweisung
+
+#+begin_src shell
+EMACS_BIN="/Applications/Emacs.app/Contents/MacOS/Emacs"
+#+end_src
+
+Minimal-Konfiguration testen:
+
+#+begin_src shell
+"$EMACS_BIN" --init-directory "$HOME/.config/emacs-minimal"
+#+end_src
+
+Power-Konfiguration testen:
+
+#+begin_src shell
+"$EMACS_BIN" --init-directory "$HOME/.config/emacs-minimal"
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Durch =--init-directory= wird gezielt eines der separaten Konfigurationsverzeichnisse verwendet. Dadurch bleiben =~/.emacs=, =~/.emacs.d= und =~/.config/emacs= unberührt.
+
+** Überprüfen
+
+In Emacs:
+
+#+begin_example
+C-h e
+#+end_example
+
+** Erwartete Ausgabe
+
+Für die Minimal-Konfiguration:
+
+#+begin_example
+Loaded minimal fallback Emacs config
+#+end_example
+
+Für die Power-Konfiguration:
+
+#+begin_example
+Loaded power-user Emacs config placeholder
+#+end_example
+
+* 7. Native-Compilation-Umgebung vorbereiten
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install gcc libgccjit
+#+end_src
+
+Prüfen:
+
+#+begin_src shell
+brew --prefix gcc
+brew --prefix libgccjit
+ls -1 /opt/homebrew/bin/gcc-* /opt/homebrew/bin/g++-* 2>/dev/null
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Emacs native-comp verwendet =libgccjit=. Auf macOS ist =/usr/bin/gcc= in der Praxis Apple Clang. Für native-comp muss daher versioniertes Homebrew-GCC verfügbar sein, z. B. =gcc-16=.
+
+Auf Intel macOS liegen die Pfade entsprechend meist unter =/usr/local= statt =/opt/homebrew=.
+
+** Überprüfen
+
+#+begin_src shell
+which gcc
+gcc --version
+ls -1 /opt/homebrew/bin/gcc-* /opt/homebrew/bin/g++-* 2>/dev/null
+#+end_src
+
+** Erwartete Ausgabe
+
+Es ist möglich, dass =which gcc= weiterhin Folgendes zeigt:
+
+#+begin_example
+/usr/bin/gcc
+Apple clang version ...
+#+end_example
+
+Wichtig ist, dass versionierte Homebrew-GCC-Binaries existieren, z. B.:
+
+#+begin_example
+/opt/homebrew/bin/gcc-16
+/opt/homebrew/bin/g++-16
+#+end_example
+
+* 8. Basis-Developer-Tools installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install \
+  git \
+  ripgrep \
+  fd \
+  cmake \
+  ninja \
+  pkg-config \
+  tree-sitter
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Diese Tools werden für Projektarbeit, Suche, Build-Prozesse und Tree-sitter-Unterstützung benötigt.
+
+** Überprüfen
+
+#+begin_src shell
+git --version
+rg --version | head -1
+fd --version
+cmake --version | head -1
+ninja --version
+pkg-config --version
+tree-sitter --version # Keine Ausgabe, da nur eine Library inst. wurde
+#+end_src
+
+** Erwartete Ausgabe
+
+Es sollten Versionsausgaben für alle Tools erscheinen.
+
+* 9. C/C++-Tooling installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install llvm
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Für C/C++ wird =clangd= als Language Server verwendet. Außerdem liefert LLVM Sanitizer-Unterstützung, die auf macOS in der Praxis häufig zusammen mit Apple =leaks= und Instruments als Valgrind-Ersatz verwendet wird.
+
+Typische Pfade:
+
+Apple Silicon:
+
+#+begin_example
+/opt/homebrew/opt/llvm/bin/clangd
+#+end_example
+
+Intel macOS:
+
+#+begin_example
+/usr/local/opt/llvm/bin/clangd
+#+end_example
+
+** Überprüfen
+
+#+begin_src shell
+/opt/homebrew/opt/llvm/bin/clangd --version
+which leaks
+open -a Instruments
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+clangd version ...
+/usr/bin/leaks
+#+end_example
+
+=Instruments= sollte starten, falls es installiert ist.
+
+* 10. Python-Tooling installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install python pyright
+#+end_src
+
+Shell-Command-Cache zurücksetzen:
+
+#+begin_src shell
+hash -r 2>/dev/null || rehash
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+macOS bringt oft zusätzlich ein Apple-/CLT-Python unter =/usr/bin/python3= mit. Für dieses Setup soll Homebrew-Python verwendet werden.
+
+Apple Silicon:
+
+#+begin_example
+/opt/homebrew/bin/python3
+#+end_example
+
+Intel macOS:
+
+#+begin_example
+/usr/local/bin/python3
+#+end_example
+
+** Überprüfen
+
+#+begin_src shell
+which -a python3
+python3 --version
+pyright --version
+brew info python | head -30
+#+end_src
+
+** Erwartete Ausgabe
+
+Apple-Silicon-Beispiel:
+
+#+begin_example
+/opt/homebrew/bin/python3
+/usr/bin/python3
+Python 3.14.6
+pyright 1.1.410
+#+end_example
+
+Versionsnummern können abweichen.
+
+* 11. Rust-Toolchain installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install rustup
+#+end_src
+
+Homebrew-rustup temporär in den aktuellen PATH aufnehmen:
+
+#+begin_src shell
+export PATH="$(brew --prefix rustup)/bin:$PATH"
+#+end_src
+
+Rust stable setzen und Komponenten installieren:
+
+#+begin_src shell
+rustup default stable
+rustup component add rust-analyzer rust-src
+#+end_src
+
+Cargo-Binaries temporär in den aktuellen PATH aufnehmen:
+
+#+begin_src shell
+export PATH="$HOME/.cargo/bin:$PATH"
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Die Homebrew-Formula heißt aktuell =rustup=. Ältere Anleitungen verweisen teilweise noch auf =rustup-init=. Mit Homebrew-rustup können Toolchains und Komponenten wie =rust-analyzer= sauber verwaltet werden.
+
+** Überprüfen
+
+#+begin_src shell
+which rustup
+rustup --version
+rustc --version
+cargo --version
+rust-analyzer --version
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+/opt/homebrew/opt/rustup/bin/rustup
+rustup ...
+rustc ...
+cargo ...
+rust-analyzer ...
+#+end_example
+
+* 12. Rust- und Cargo-Pfade persistent machen
+
+** Installationsanweisung
+
+Aktuelle Shell prüfen:
+
+#+begin_src shell
+echo "$SHELL"
+ps -p $$ -o comm=
+#+end_src
+
+Für zsh:
+
+#+begin_src shell
+touch ~/.zprofile
+
+grep -q 'Homebrew rustup' ~/.zprofile || cat >> ~/.zprofile <<'EOF'
+
+# Homebrew rustup
+export PATH="$(brew --prefix rustup)/bin:$PATH"
+EOF
+
+grep -q 'Rust / Cargo user binaries' ~/.zprofile || cat >> ~/.zprofile <<'EOF'
+
+# Rust / Cargo user binaries
+export PATH="$HOME/.cargo/bin:$PATH"
+EOF
+
+source ~/.zprofile
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Auf macOS ist zsh normalerweise die Standardshell. Für PATH- und Environment-Einstellungen ist =~/.zprofile= geeignet. =~/.zshrc= wird später für interaktive Funktionen verwendet.
+
+** Überprüfen
+
+#+begin_src shell
+which rustup
+which cargo
+echo "$PATH" | tr ':' '\n' | grep -E 'rustup|cargo'
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+/opt/homebrew/opt/rustup/bin/rustup
+/Users/<user>/.cargo/bin/cargo
+/opt/homebrew/opt/rustup/bin
+/Users/<user>/.cargo/bin
+#+end_example
+
+* 13. rust-script für Org-Babel-Rust installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+cargo install rust-script
+#+end_src
+
+Falls danach nicht gefunden:
+
+#+begin_src shell
+export PATH="$HOME/.cargo/bin:$PATH"
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Das Emacs-Paket =ob-rust= verwendet für Rust-Codeblöcke in Org-mode =rust-script=. Ohne dieses Tool erscheint beim Ausführen eines Rust-Blocks typischerweise:
+
+#+begin_example
+command not found: rust-script
+#+end_example
+
+** Überprüfen
+
+#+begin_src shell
+cargo install --list | grep -A2 rust-script
+which rust-script
+rust-script --version
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+rust-script ...
+/Users/<user>/.cargo/bin/rust-script
+rust-script ...
+#+end_example
+
+* 14. vterm-Abhängigkeit installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install libvterm
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Das Emacs-Paket =vterm= baut ein natives Modul. Dafür werden =libvterm= und Build-Werkzeuge wie =cmake= benötigt.
+
+** Überprüfen
+
+#+begin_src shell
+brew --prefix libvterm
+#+end_src
+
+** Erwartete Ausgabe
+
+Apple Silicon:
+
+#+begin_example
+/opt/homebrew/opt/libvterm
+#+end_example
+
+Intel macOS:
+
+#+begin_example
+/usr/local/opt/libvterm
+#+end_example
+
+* 15. Optionale CLI-Hilfstools installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install jq yq delta
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Diese Tools sind nicht zwingend erforderlich, aber nützlich für technische Workflows:
+
+- =jq=: JSON-Verarbeitung
+- =yq=: YAML-Verarbeitung
+- =delta=: bessere Git-Diffs im Terminal
+
+** Überprüfen
+
+#+begin_src shell
+jq --version
+yq --version
+delta --version
+#+end_src
+
+** Erwartete Ausgabe
+
+Es sollten Versionsausgaben für alle drei Tools erscheinen.
+
+* 16. JetBrains Mono Nerd Font installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install --cask font-jetbrains-mono-nerd-font
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+JetBrains Mono Nerd Font ist eine gute Coding-Schrift mit zusätzlichen Nerd-Font-Glyphen. Sie wird später in der Emacs-Konfiguration als primärer Coding-Font verwendet.
+
+** Überprüfen
+
+Die Verfügbarkeit wird später am zuverlässigsten direkt in Emacs geprüft:
+
+#+begin_src emacs-lisp
+(member "JetBrainsMono Nerd Font" (font-family-list))
+#+end_src
+
+** Erwartete Ausgabe
+
+Die Abfrage sollte nicht =nil= zurückgeben, falls die Font exakt so erkannt wird. Je nach macOS-Fontname kann auch eine Variante wie =JetBrainsMono Nerd Font Mono= verfügbar sein.
+
+* 17. Codex CLI installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install --cask codex
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Codex CLI ist der primäre ChatGPT/OpenAI-basierte Coding-Agent in diesem Setup. Die Authentifizierung erfolgt beim ersten Start interaktiv.
+
+#+begin_src shell
+codex
+#+end_src
+
+** Überprüfen
+
+#+begin_src shell
+which codex
+codex --version
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+/opt/homebrew/bin/codex
+codex ...
+#+end_example
+
+* 18. Claude Code installieren
+
+** Installationsanweisung
+
+#+begin_src shell
+brew install --cask claude-code
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Claude Code ist der sekundäre AI-Coding-Agent in diesem Setup. Die Anmeldung erfolgt beim ersten Start interaktiv.
+
+#+begin_src shell
+claude
+#+end_src
+
+** Überprüfen
+
+#+begin_src shell
+which claude
+claude --version
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+/opt/homebrew/bin/claude
+claude ...
+#+end_example
+
+* 19. AI-Testverzeichnis anlegen
+
+** Installationsanweisung
+
+#+begin_src shell
+mkdir -p ~/tmp/ai-cli-test
+cd ~/tmp/ai-cli-test
+git init
+echo '# AI CLI test' > README.md
+#+end_src
+
+Codex testen:
+
+#+begin_src shell
+codex
+#+end_src
+
+Claude testen:
+
+#+begin_src shell
+claude
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+AI-Tools sollten zuerst in einem harmlosen Test-Repository ausprobiert werden. Beide Werkzeuge können je nach Modus Dateien lesen, ändern und lokale Befehle ausführen.
+
+** Überprüfen
+
+#+begin_src shell
+cd ~/tmp/ai-cli-test
+git status
+codex --version
+claude --version
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+On branch main
+...
+codex ...
+claude ...
+#+end_example
+
+* 20. Emacs-Daemon-Grundtest ohne Shell-Funktionen
+
+** Installationsanweisung
+
+Daemon manuell starten:
+
+#+begin_src shell
+/Applications/Emacs.app/Contents/MacOS/Emacs \
+  --init-directory "$HOME/.config/emacs-power" \
+  --daemon=power \
+  > /tmp/emacs-power-daemon.log 2>&1 &
+disown
+#+end_src
+
+Socket prüfen:
+
+#+begin_src shell
+ls -la "$TMPDIR/emacs$(id -u)" 2>/dev/null || true
+#+end_src
+
+GUI-Client starten:
+
+#+begin_src shell
+emacsclient -s "$TMPDIR/emacs$(id -u)/power" -n -c
+#+end_src
+
+Terminal-Client starten:
+
+#+begin_src shell
+emacsclient -s "$TMPDIR/emacs$(id -u)/power" -t
+#+end_src
+
+Terminal-Client mit =C-x C-c= beenden.
+
+Daemon stoppen:
+
+#+begin_src shell
+emacsclient -s "$TMPDIR/emacs$(id -u)/power" -e "(kill-emacs)"
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Auf dem getesteten macOS-System hat =emacsclient -s power= den Socket nicht zuverlässig gefunden. Stabil war die explizite Socket-Angabe:
+
+#+begin_example
+$TMPDIR/emacs$(id -u)/power
+#+end_example
+
+Der Parameter =-n= beim GUI-Client sorgt dafür, dass die Shell sofort zurückkehrt und nicht auf das Schließen des Emacs-Fensters wartet.
+
+** Überprüfen
+
+#+begin_src shell
+pgrep -af Emacs || true
+ls -l "$TMPDIR/emacs$(id -u)/power" 2>/dev/null || echo "socket missing"
+emacsclient -s "$TMPDIR/emacs$(id -u)/power" -e '(emacs-pid)'
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+33430
+srwx------ ... /var/folders/.../T/emacs501/power
+33430
+#+end_example
+
+* 21. Shell-Funktionen für Daemon, GUI, Terminal und Fallback einrichten
+
+** Installationsanweisung
+
+Zsh-Konfigurationsdatei für interaktive Funktionen anlegen:
+
+#+begin_src shell
+touch ~/.zshrc
+#+end_src
+
+Folgende Funktionen in =~/.zshrc= eintragen:
+
+#+begin_src shell
+cat >> ~/.zshrc <<'EOF'
+
+# Emacs Plus power-user setup - daemon/client helpers
+
+emacs-power-socket() {
+  printf "%s/emacs%s/power" "${TMPDIR%/}" "$(id -u)"
+}
+
+emacs-power-start() {
+  local sock
+  sock="$(emacs-power-socket)"
+
+  if [ -S "$sock" ] && emacsclient -s "$sock" -e '(emacs-pid)' >/dev/null 2>&1; then
+    echo "Emacs power daemon already running: $sock"
+    return 0
+  fi
+
+  /Applications/Emacs.app/Contents/MacOS/Emacs \
+    --init-directory "$HOME/.config/emacs-power" \
+    --daemon=power \
+    > /tmp/emacs-power-daemon.log 2>&1 &
+
+  disown
+}
+
+emacs-power-gui() {
+  emacsclient -s "$(emacs-power-socket)" -n -c "$@"
+}
+
+emacs-power-term() {
+  emacsclient -s "$(emacs-power-socket)" -t "$@"
+}
+
+emacs-power-stop() {
+  emacsclient -s "$(emacs-power-socket)" -e "(kill-emacs)"
+}
+
+emacs-power-restart() {
+  emacs-power-stop 2>/dev/null || true
+  sleep 1
+  emacs-power-start
+}
+
+emacs-power-status() {
+  pgrep -af Emacs || true
+  echo "Socket: $(emacs-power-socket)"
+  ls -l "$(emacs-power-socket)" 2>/dev/null || true
+}
+
+emacs-power-log() {
+  tail -100 /tmp/emacs-power-daemon.log
+}
+
+emacs-power-batch-check() {
+  /Applications/Emacs.app/Contents/MacOS/Emacs \
+    --batch \
+    --init-directory "$HOME/.config/emacs-power" \
+    --eval '(message "Power config batch check OK")'
+}
+
+emacs-power-direct() {
+  /Applications/Emacs.app/Contents/MacOS/Emacs \
+    --init-directory "$HOME/.config/emacs-power" "$@"
+}
+
+emacs-minimal-direct() {
+  /Applications/Emacs.app/Contents/MacOS/Emacs \
+    --init-directory "$HOME/.config/emacs-minimal" "$@"
+}
+EOF
+#+end_src
+
+Aktuelle Shell neu laden:
+
+#+begin_src shell
+source ~/.zshrc
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Diese Funktionen kapseln die relevanten Startarten:
+
+- =emacs-power-direct=: direkter GUI-Start mit Power-Konfiguration, ohne Daemon
+- =emacs-minimal-direct=: direkter GUI-Start mit Minimal-Fallback-Konfiguration
+- =emacs-power-start=: Start des benannten Daemons =power=
+- =emacs-power-gui=: Start eines GUI-Clients gegen den Daemon
+- =emacs-power-term=: Start eines Terminal-Clients gegen den Daemon
+- =emacs-power-stop=: sauberes Beenden des Daemons
+
+Die Funktionen verwenden explizit den macOS-Socket-Pfad =${TMPDIR}/emacs$(id -u)/power=, weil das stabiler ist als =emacsclient -s power=.
+
+** Überprüfen
+
+#+begin_src shell
+type emacs-power-start
+type emacs-power-gui
+type emacs-power-term
+type emacs-power-direct
+type emacs-minimal-direct
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+emacs-power-start is a shell function from /Users/<user>/.zshrc
+emacs-power-gui is a shell function from /Users/<user>/.zshrc
+emacs-power-term is a shell function from /Users/<user>/.zshrc
+emacs-power-direct is a shell function from /Users/<user>/.zshrc
+emacs-minimal-direct is a shell function from /Users/<user>/.zshrc
+#+end_example
+
+* 22. Direkten GUI-Start testen
+
+** Installationsanweisung
+
+Power-Konfiguration direkt starten:
+
+#+begin_src shell
+emacs-power-direct
+#+end_src
+
+Minimal-Fallback direkt starten:
+
+#+begin_src shell
+emacs-minimal-direct
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Der direkte Start verwendet keinen Daemon. Er ist besonders hilfreich zum Debuggen, weil Startup-Fehler direkt sichtbar werden.
+
+Der Minimal-Fallback ist die Rettungsvariante, wenn die Power-Konfiguration defekt ist.
+
+** Überprüfen
+
+In Emacs:
+
+#+begin_example
+C-h e
+#+end_example
+
+** Erwartete Ausgabe
+
+Für Power-Konfiguration mindestens:
+
+#+begin_example
+Loaded power-user Emacs config placeholder
+#+end_example
+
+Nach späterer vollständiger Konfiguration erscheinen weitere Meldungen.
+
+Für Minimal-Fallback:
+
+#+begin_example
+Loaded minimal fallback Emacs config
+#+end_example
+
+* 23. Daemon- und GUI-Client-Start testen
+
+** Installationsanweisung
+
+Daemon starten:
+
+#+begin_src shell
+emacs-power-start
+#+end_src
+
+Kurz warten und Status prüfen:
+
+#+begin_src shell
+sleep 2
+emacs-power-status
+#+end_src
+
+GUI-Client starten:
+
+#+begin_src shell
+emacs-power-gui
+#+end_src
+
+Terminal-Client starten:
+
+#+begin_src shell
+emacs-power-term
+#+end_src
+
+Terminal-Client mit =C-x C-c= beenden.
+
+Daemon stoppen:
+
+#+begin_src shell
+emacs-power-stop
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Dies ist der empfohlene spätere Normalbetrieb:
+
+#+begin_src shell
+emacs-power-start
+emacs-power-gui
+#+end_src
+
+Weitere GUI-Fenster können danach jederzeit mit =emacs-power-gui= geöffnet werden.
+
+Der Terminal-Client =emacs-power-term= verbindet sich mit derselben Daemon-Sitzung. Buffer, geöffnete Dateien und Zustand werden zwischen GUI- und Terminal-Client geteilt.
+
+** Überprüfen
+
+Nach =emacs-power-start=:
+
+#+begin_src shell
+emacs-power-status
+emacsclient -s "$(emacs-power-socket)" -e '(emacs-pid)'
+#+end_src
+
+** Erwartete Ausgabe
+
+Beispiel:
+
+#+begin_example
+33430
+Socket: /var/folders/.../T/emacs501/power
+srwx------ ... /var/folders/.../T/emacs501/power
+33430
+#+end_example
+
+Beim Aufruf von:
+
+#+begin_src shell
+emacs-power-gui
+#+end_src
+
+sollte ein GUI-Fenster öffnen und die Shell sofort zurückkehren.
+
+Beim Aufruf von:
+
+#+begin_src shell
+emacs-power-term
+#+end_src
+
+sollte Emacs im Terminal starten.
+
+* 24. Abschließender Installationscheck
+
+** Installationsanweisung
+
+#+begin_src shell
+echo "== Homebrew =="
+brew --prefix
+uname -m
+
+echo
+echo "== Emacs =="
+/Applications/Emacs.app/Contents/MacOS/Emacs --version | head -1
+emacsclient --version
+
+echo
+echo "== Search/navigation =="
+rg --version | head -1
+fd --version
+
+echo
+echo "== Build tools =="
+cmake --version | head -1
+ninja --version
+pkg-config --version
+
+echo
+echo "== C/C++ =="
+/opt/homebrew/opt/llvm/bin/clangd --version | head -1
+
+echo
+echo "== Python =="
+python3 --version
+pyright --version
+
+echo
+echo "== Rust =="
+rustup --version
+rustc --version
+cargo --version
+rust-analyzer --version
+rust-script --version
+
+echo
+echo "== vterm dependency =="
+brew --prefix libvterm
+
+echo
+echo "== AI tools =="
+codex --version
+claude --version
+
+echo
+echo "== Emacs helper functions =="
+type emacs-power-start
+type emacs-power-gui
+type emacs-power-direct
+type emacs-minimal-direct
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Dieser finale Check prüft, ob alle wesentlichen externen Komponenten und die Shell-Funktionen vorhanden sind.
+
+Auf Intel macOS müssen Pfade mit =/opt/homebrew= ggf. durch =/usr/local= ersetzt werden, insbesondere bei LLVM:
+
+Apple Silicon:
+
+#+begin_example
+/opt/homebrew/opt/llvm/bin/clangd
+#+end_example
+
+Intel macOS:
+
+#+begin_example
+/usr/local/opt/llvm/bin/clangd
+#+end_example
+
+** Überprüfen
+
+Der obige Block ist der Prüfschritt.
+
+** Erwartete Ausgabe
+
+Beispielhaft:
+
+#+begin_example
+/opt/homebrew
+arm64
+GNU Emacs 30.2
+emacsclient 30.2
+ripgrep ...
+fd ...
+cmake ...
+ninja ...
+clangd ...
+Python 3.14.6
+pyright ...
+rustup ...
+rustc ...
+cargo ...
+rust-analyzer ...
+rust-script ...
+/opt/homebrew/opt/libvterm
+codex ...
+claude ...
+emacs-power-start is a shell function from /Users/<user>/.zshrc
+emacs-power-gui is a shell function from /Users/<user>/.zshrc
+emacs-power-direct is a shell function from /Users/<user>/.zshrc
+emacs-minimal-direct is a shell function from /Users/<user>/.zshrc
+#+end_example
+
+Die genauen Versionsnummern können abweichen.
+
+* 25. Ergebnis und empfohlener Start im Alltag
+
+** Installationsanweisung
+
+Normaler Start nach Login:
+
+#+begin_src shell
+emacs-power-start
+emacs-power-gui
+#+end_src
+
+Weitere GUI-Fenster öffnen:
+
+#+begin_src shell
+emacs-power-gui
+#+end_src
+
+Datei direkt im GUI-Client öffnen:
+
+#+begin_src shell
+emacs-power-gui ~/src/project/main.c
+#+end_src
+
+Terminal-Client öffnen:
+
+#+begin_src shell
+emacs-power-term
+#+end_src
+
+Daemon stoppen:
+
+#+begin_src shell
+emacs-power-stop
+#+end_src
+
+Power-Konfiguration ohne Daemon debuggen:
+
+#+begin_src shell
+emacs-power-direct
+#+end_src
+
+Minimal-Fallback starten:
+
+#+begin_src shell
+emacs-minimal-direct
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Der empfohlene Normalbetrieb ist Daemon plus Client. Der Daemon hält die Emacs-Sitzung im Hintergrund, während GUI- und Terminal-Clients schnell starten.
+
+Der direkte Start bleibt wichtig für Debugging. Der Minimal-Fallback bleibt wichtig für Recovery.
+
+** Überprüfen
+
+#+begin_src shell
+emacs-power-start
+sleep 2
+emacs-power-status
+emacs-power-gui
+#+end_src
+
+** Erwartete Ausgabe
+
+- =emacs-power-status= zeigt einen laufenden Emacs-Prozess und einen Socket =.../emacs<uid>/power=.
+- =emacs-power-gui= öffnet ein GUI-Fenster.
+- Die Shell kehrt sofort zurück.
+- Es erscheint keine Meldung wie =can't find socket=.
+
+* 26. Hinweis zur separaten Konfigurationsanleitung
+
+Die eigentliche Konfiguration sollte in einer separaten Anleitung dokumentiert werden. Diese sollte insbesondere enthalten:
+
+- Inhalt von =early-init.el=
+- Inhalt von =init.el=
+- native-comp-Umgebung
+- Package-Setup
+- Completion-Stack
+- LSP/Eglot für C/C++, Python und Rust
+- Tree-sitter-Grammars
+- Org-mode und Org-Babel
+- Org-PDF-Export via LaTeX
+- vterm
+- AI-Funktionen
+- Magit
+- Theme, Fonts und 80-Spalten-Highlighting
+- Daemon-/Client-Shell-Funktionen
+- Fallback-/Rollback-Verfahren

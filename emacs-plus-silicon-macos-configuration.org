@@ -1,0 +1,1721 @@
+#+title: Emacs Plus Konfigurationsanleitung auf Apple Silicon macOS
+#+author: M365 Copilot
+#+language: de
+#+options: toc:3 num:t
+
+* Vorbemerkung
+
+Diese Konfigurationsanleitung ergänzt die separate Installationsanleitung:
+
+#+begin_example
+emacs-plus-silicon-macos-installation-v2.org
+#+end_example
+
+Sie beschreibt die Konfiguration der Power-User-Umgebung unter:
+
+#+begin_example
+~/.config/emacs-power/
+#+end_example
+
+Die Anleitung ist nach folgendem Schema aufgebaut:
+
+- Installationsanweisung
+- Erläuterungen / Erklärungen
+- Überprüfen
+- Erwartete Ausgabe
+
+Die Anleitung geht davon aus, dass folgende Basis bereits installiert ist:
+
+- Emacs Plus GUI unter =/Applications/Emacs.app=
+- Homebrew unter =/opt/homebrew= auf Apple Silicon
+- getrennte Config-Verzeichnisse =emacs-minimal= und =emacs-power=
+- externe Tools wie =clangd=, =pyright=, =rust-analyzer=, =rust-script=, =libvterm=, =codex= und =claude=
+
+Für Intel macOS müssen Pfade mit =/opt/homebrew= ggf. durch =/usr/local= ersetzt werden.
+
+* 1. Zielstruktur der Emacs-Konfiguration
+
+** Installationsanweisung
+
+Die Power-Konfiguration liegt unter:
+
+#+begin_example
+~/.config/emacs-power/
+#+end_example
+
+Darin werden mindestens diese Dateien verwendet:
+
+#+begin_example
+~/.config/emacs-power/early-init.el
+~/.config/emacs-power/init.el
+#+end_example
+
+Die Minimal-Fallback-Konfiguration liegt unter:
+
+#+begin_example
+~/.config/emacs-minimal/init.el
+#+end_example
+
+** Erläuterungen / Erklärungen
+
+=early-init.el= wird sehr früh geladen, noch vor der normalen Package-Initialisierung. Dort gehören frühe Startup-, PATH-, native-comp- und Performance-Einstellungen hinein.
+
+=init.el= ist die Hauptkonfiguration. Dort liegen Package-Setup, Completion, LSP, Org-mode, AI-Workflow, Magit, Theme und Keybindings.
+
+** Überprüfen
+
+#+begin_src shell
+ls -l ~/.config/emacs-power/early-init.el ~/.config/emacs-power/init.el
+ls -l ~/.config/emacs-minimal/init.el
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+/Users/<user>/.config/emacs-power/early-init.el
+/Users/<user>/.config/emacs-power/init.el
+/Users/<user>/.config/emacs-minimal/init.el
+#+end_example
+
+* 2. Backup vor Konfigurationsänderungen
+
+** Installationsanweisung
+
+Vor jeder größeren Änderung:
+
+#+begin_src shell
+cp -a ~/.config/emacs-power ~/.config/emacs-power.before-change.$(date +%Y%m%d-%H%M%S)
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Dadurch kann die komplette Power-Konfiguration schnell zurückgerollt werden. Das ist einfacher und robuster als einzelne Änderungen manuell rückgängig zu machen.
+
+** Überprüfen
+
+#+begin_src shell
+ls -ld ~/.config/emacs-power.before-change.* 2>/dev/null | tail
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+/Users/<user>/.config/emacs-power.before-change.YYYYMMDD-HHMMSS
+#+end_example
+
+* 3. early-init.el erstellen
+
+** Installationsanweisung
+
+Erstelle oder ersetze:
+
+#+begin_example
+~/.config/emacs-power/early-init.el
+#+end_example
+
+mit folgendem Inhalt:
+
+#+begin_src emacs-lisp
+;;; early-init.el --- Early startup tuning
+
+;;; Homebrew / native-comp environment for Apple Silicon macOS
+
+(when (eq system-type 'darwin)
+  ;; Prefer Homebrew tools early.
+  (let ((brew-bin "/opt/homebrew/bin")
+        (brew-sbin "/opt/homebrew/sbin"))
+    (setenv "PATH"
+            (mapconcat #'identity
+                       (delete-dups
+                        (append (list brew-bin brew-sbin)
+                                (split-string (or (getenv "PATH") "") path-separator t)))
+                       path-separator))
+    (setq exec-path
+          (delete-dups
+           (append (list brew-bin brew-sbin) exec-path))))
+
+  ;; Use explicit GNU GCC binaries. Homebrew does not normally provide
+  ;; unversioned gcc/g++ because /usr/bin/gcc is Apple Clang.
+  (let* ((gcc-candidates (file-expand-wildcards "/opt/homebrew/bin/gcc-[0-9]*"))
+         (gxx-candidates (file-expand-wildcards "/opt/homebrew/bin/g++-[0-9]*"))
+         (gcc-bin (car (last (sort gcc-candidates #'string<))))
+         (gxx-bin (car (last (sort gxx-candidates #'string<)))))
+    (when gcc-bin
+      (setenv "CC" gcc-bin))
+    (when gxx-bin
+      (setenv "CXX" gxx-bin)))
+
+  ;; Help libgccjit find the GCC support libraries when native-compiling.
+  (let* ((gcc-lib-current "/opt/homebrew/opt/gcc/lib/gcc/current")
+         (libgccjit-lib-current "/opt/homebrew/opt/libgccjit/lib/gcc/current")
+         (gcc-arch-dirs
+          (file-expand-wildcards
+           "/opt/homebrew/opt/gcc/lib/gcc/current/gcc/*-apple-darwin*/*"))
+         (candidate-paths
+          (append
+           (list gcc-lib-current
+                 libgccjit-lib-current
+                 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib")
+           gcc-arch-dirs))
+         (existing-paths
+          (split-string (or (getenv "LIBRARY_PATH") "") path-separator t))
+         (valid-paths
+          (seq-filter #'file-directory-p candidate-paths)))
+    (setenv "LIBRARY_PATH"
+            (mapconcat #'identity
+                       (delete-dups (append valid-paths existing-paths))
+                       path-separator))))
+
+;;; Rust / Cargo path
+
+(when (eq system-type 'darwin)
+  (let ((cargo-bin (expand-file-name "~/.cargo/bin"))
+        (rustup-bin "/opt/homebrew/opt/rustup/bin"))
+    (dolist (dir (list cargo-bin rustup-bin))
+      (when (file-directory-p dir)
+        (setenv "PATH" (concat dir path-separator (getenv "PATH")))
+        (add-to-list 'exec-path dir)))))
+
+;;; Package startup behavior
+
+(setq package-enable-at-startup nil)
+
+;;; Native-comp behavior
+
+(setq native-comp-async-report-warnings-errors nil)
+
+;;; Startup performance
+
+(setq gc-cons-threshold most-positive-fixnum
+      gc-cons-percentage 0.6)
+
+(setq frame-inhibit-implied-resize t)
+
+(menu-bar-mode 1)
+(tool-bar-mode -1)
+(scroll-bar-mode -1)
+
+;;; early-init.el ends here
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Diese Datei sorgt dafür, dass Emacs früh genug die korrekten Homebrew-, GCC-, libgccjit-, Rust- und Cargo-Pfade sieht.
+
+Wichtig ist vor allem:
+
+- =/opt/homebrew/bin= steht früh im PATH.
+- native-comp verwendet Homebrew-GCC statt Apple Clang.
+- =LIBRARY_PATH= enthält die nötigen GCC/libgccjit-Pfade.
+- Cargo-Tools wie =rust-script= werden auch in GUI-Emacs gefunden.
+
+Auf Intel macOS müssen die Pfade =/opt/homebrew= entsprechend durch =/usr/local= ersetzt werden.
+
+** Überprüfen
+
+#+begin_src shell
+/Applications/Emacs.app/Contents/MacOS/Emacs \
+  --batch \
+  --init-directory "$HOME/.config/emacs-power" \
+  --eval '(message "early-init load test OK")'
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+early-init load test OK
+#+end_example
+
+Es sollten keine Lisp-Fehler erscheinen.
+
+* 4. Basis-init.el mit Package-Setup und UI-Grundlagen
+
+** Installationsanweisung
+
+Erstelle oder ersetze:
+
+#+begin_example
+~/.config/emacs-power/init.el
+#+end_example
+
+mit folgendem Basisinhalt:
+
+#+begin_src emacs-lisp
+;;; init.el --- Power-user Emacs base config
+
+;;; Basic startup behavior
+
+(setq inhibit-startup-screen t)
+(setq initial-scratch-message nil)
+
+(add-hook 'emacs-startup-hook
+          (lambda ()
+            (setq gc-cons-threshold (* 64 1024 1024)
+                  gc-cons-percentage 0.1)))
+
+(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
+(when (file-exists-p custom-file)
+  (load custom-file))
+
+;;; macOS behavior
+
+(when (eq system-type 'darwin)
+  (setq mac-command-modifier 'meta)
+  (setq mac-option-modifier 'none)
+  (setq ns-function-modifier 'hyper)
+  (setq ns-use-native-fullscreen t))
+
+;;; Backups and autosaves
+
+(setq backup-directory-alist
+      `(("." . ,(expand-file-name "backups/" user-emacs-directory))))
+
+(setq auto-save-file-name-transforms
+      `((".*" ,(expand-file-name "auto-save/" user-emacs-directory) t)))
+
+(make-directory (expand-file-name "backups/" user-emacs-directory) t)
+(make-directory (expand-file-name "auto-save/" user-emacs-directory) t)
+
+;;; Package management
+
+(require 'package)
+
+(setq package-archives
+      '(("gnu"    . "https://elpa.gnu.org/packages/")
+        ("nongnu" . "https://elpa.nongnu.org/nongnu/")
+        ("melpa"  . "https://melpa.org/packages/")))
+
+(package-initialize)
+
+(unless package-archive-contents
+  (package-refresh-contents))
+
+(unless (package-installed-p 'use-package)
+  (package-install 'use-package))
+
+(require 'use-package)
+
+(setq use-package-always-ensure t)
+(setq use-package-always-defer t)
+(setq use-package-verbose nil)
+
+;;; macOS shell environment import
+
+(use-package exec-path-from-shell
+  :if (memq window-system '(mac ns x))
+  :demand t
+  :config
+  (setq exec-path-from-shell-variables
+        '("PATH" "MANPATH" "SHELL" "LANG" "LC_ALL" "LC_CTYPE"))
+  (exec-path-from-shell-initialize))
+
+;;; General editing defaults
+
+(setq-default indent-tabs-mode nil)
+(setq-default tab-width 4)
+(setq require-final-newline t)
+(setq ring-bell-function 'ignore)
+
+(global-display-line-numbers-mode 1)
+(column-number-mode 1)
+(save-place-mode 1)
+(savehist-mode 1)
+(recentf-mode 1)
+
+(setq recentf-max-saved-items 200)
+(setq history-length 200)
+
+(show-paren-mode 1)
+(global-auto-revert-mode 1)
+(setq global-auto-revert-non-file-buffers t)
+
+;;; Built-in project support
+
+(use-package project
+  :ensure nil
+  :defer nil)
+
+(message "Loaded power-user Emacs base config")
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Dieser Abschnitt richtet die Grundstruktur der Konfiguration ein:
+
+- Package-Archive GNU ELPA, NonGNU ELPA und MELPA
+- =use-package= als Konfigurationsmakro
+- macOS-PATH-Import über =exec-path-from-shell=
+- separate Backup-/Autosave-Verzeichnisse
+- Zeilennummern, Verlauf, recentf, save-place
+
+** Überprüfen
+
+#+begin_src shell
+/Applications/Emacs.app/Contents/MacOS/Emacs \
+  --batch \
+  --init-directory "$HOME/.config/emacs-power" \
+  --eval '(message "base init load OK")'
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+Loaded power-user Emacs base config
+base init load OK
+#+end_example
+
+* 5. Completion- und Navigations-Stack konfigurieren
+
+** Installationsanweisung
+
+Folgenden Block an =~/.config/emacs-power/init.el= anhängen:
+
+#+begin_src emacs-lisp
+;;; ---------------------------------------------------------------------------
+;;; Completion and navigation
+;;; ---------------------------------------------------------------------------
+
+(use-package vertico
+  :demand t
+  :config
+  (vertico-mode 1))
+
+(use-package orderless
+  :demand t
+  :config
+  (setq completion-styles '(orderless basic)
+        completion-category-defaults nil
+        completion-category-overrides '((file (styles basic partial-completion)))))
+
+(use-package marginalia
+  :demand t
+  :config
+  (marginalia-mode 1))
+
+(use-package consult
+  :bind
+  (("C-s" . consult-line)
+   ("C-x b" . consult-buffer)
+   ("C-c f" . consult-find)
+   ("C-c g" . consult-grep)
+   ("C-c r" . consult-ripgrep)
+   ("C-c i" . consult-imenu)
+   ("C-c p b" . consult-project-buffer)))
+
+(use-package corfu
+  :demand t
+  :config
+  (setq corfu-auto t
+        corfu-auto-delay 0.2
+        corfu-auto-prefix 2
+        corfu-cycle t
+        corfu-preview-current nil)
+  (global-corfu-mode 1))
+
+(use-package cape
+  :after corfu
+  :config
+  (add-to-list 'completion-at-point-functions #'cape-file)
+  (add-to-list 'completion-at-point-functions #'cape-dabbrev))
+
+(use-package which-key
+  :demand t
+  :config
+  (setq which-key-idle-delay 0.5)
+  (which-key-mode 1))
+
+(use-package helpful
+  :bind
+  (("C-h f" . helpful-callable)
+   ("C-h v" . helpful-variable)
+   ("C-h k" . helpful-key)
+   ("C-h x" . helpful-command)))
+
+(use-package vertico-directory
+  :ensure nil
+  :after vertico
+  :bind
+  (:map vertico-map
+        ("DEL" . vertico-directory-delete-char)
+        ("M-DEL" . vertico-directory-delete-word)
+        ("C-l" . vertico-directory-up))
+  :hook
+  (rfn-eshadow-update-overlay . vertico-directory-tidy))
+
+(message "Loaded completion/navigation configuration")
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Dieser Stack ersetzt keine Emacs-Grundfunktionen, sondern verbessert sie:
+
+- =vertico=: vertikale Completion im Minibuffer
+- =orderless=: flexible Suchmuster
+- =marginalia=: Zusatzinfos im Minibuffer
+- =consult=: schnelle Suche und Navigation
+- =corfu=: Completion im Buffer
+- =cape=: zusätzliche Completion-Quellen
+- =which-key=: Keybinding-Hilfe
+- =helpful=: bessere Help-Buffer
+- =vertico-directory=: ordnerweises Navigieren beim Öffnen von Dateien
+
+Das ordnerweise Navigieren funktioniert im Dateiprompt z. B. mit:
+
+- =M-DEL=: Pfadkomponente löschen
+- =C-l=: ein Verzeichnis nach oben
+
+** Überprüfen
+
+Emacs direkt starten:
+
+#+begin_src shell
+emacs-power-direct
+#+end_src
+
+In Emacs testen:
+
+#+begin_example
+M-x consult-buffer
+C-s
+C-x C-f
+#+end_example
+
+** Erwartete Ausgabe
+
+- =M-x consult-buffer= öffnet eine moderne Buffer-Auswahl.
+- =C-s= startet =consult-line=.
+- In =C-x C-f= funktionieren =M-DEL= und =C-l= ordnerweise.
+
+* 6. Tree-sitter und Eglot/LSP für C/C++, Python und Rust
+
+** Installationsanweisung
+
+Folgenden Block an =init.el= anhängen:
+
+#+begin_src emacs-lisp
+;;; ---------------------------------------------------------------------------
+;;; Programming foundation: Tree-sitter, Eglot, C/C++, Python, Rust
+;;; ---------------------------------------------------------------------------
+
+(setq treesit-language-source-alist
+      '((bash   "https://github.com/tree-sitter/tree-sitter-bash")
+        (c      "https://github.com/tree-sitter/tree-sitter-c")
+        (cpp    "https://github.com/tree-sitter/tree-sitter-cpp")
+        (python "https://github.com/tree-sitter/tree-sitter-python")
+        (rust   "https://github.com/tree-sitter/tree-sitter-rust")
+        (toml   "https://github.com/tree-sitter/tree-sitter-toml")
+        (json   "https://github.com/tree-sitter/tree-sitter-json")
+        (yaml   "https://github.com/ikatyang/tree-sitter-yaml")))
+
+(defun gp/treesit-install-missing-grammars ()
+  "Install missing Tree-sitter grammars from `treesit-language-source-alist'."
+  (interactive)
+  (dolist (grammar treesit-language-source-alist)
+    (let ((lang (car grammar)))
+      (unless (treesit-language-available-p lang)
+        (message "Installing Tree-sitter grammar: %s" lang)
+        (treesit-install-language-grammar lang)))))
+
+(when (fboundp 'c-ts-mode)
+  (add-to-list 'major-mode-remap-alist '(c-mode . c-ts-mode)))
+
+(when (fboundp 'c++-ts-mode)
+  (add-to-list 'major-mode-remap-alist '(c++-mode . c++-ts-mode)))
+
+(when (fboundp 'python-ts-mode)
+  (add-to-list 'major-mode-remap-alist '(python-mode . python-ts-mode)))
+
+(when (fboundp 'rust-ts-mode)
+  (add-to-list 'major-mode-remap-alist '(rust-mode . rust-ts-mode)))
+
+(use-package rust-mode
+  :mode "\\.rs\\'"
+  :hook
+  (rust-mode . eglot-ensure)
+  :config
+  (setq rust-format-on-save nil))
+
+(when (fboundp 'rust-ts-mode)
+  (add-to-list 'auto-mode-alist '("\\.rs\\'" . rust-ts-mode))
+  (add-hook 'rust-ts-mode-hook #'eglot-ensure))
+
+(use-package eglot
+  :ensure nil
+  :hook
+  ((c-mode c-ts-mode c++-mode c++-ts-mode python-mode python-ts-mode rust-mode rust-ts-mode)
+   . eglot-ensure)
+  :bind
+  (:map eglot-mode-map
+        ("C-c l r" . eglot-rename)
+        ("C-c l a" . eglot-code-actions)
+        ("C-c l f" . eglot-format)
+        ("C-c l d" . eldoc)
+        ("C-c l i" . eglot-find-implementation)
+        ("C-c l t" . eglot-find-typeDefinition))
+  :config
+  (setq eglot-events-buffer-size 0)
+  (setq eglot-autoshutdown t)
+
+  (add-to-list 'eglot-server-programs
+               '((c-mode c-ts-mode c++-mode c++-ts-mode)
+                 . ("/opt/homebrew/opt/llvm/bin/clangd"
+                    "--background-index"
+                    "--clang-tidy"
+                    "--completion-style=detailed"
+                    "--header-insertion=iwyu")))
+
+  (add-to-list 'eglot-server-programs
+               '((python-mode python-ts-mode)
+                 . ("pyright-langserver" "--stdio")))
+
+  (add-to-list 'eglot-server-programs
+               '((rust-mode rust-ts-mode)
+                 . ("/opt/homebrew/opt/rustup/bin/rust-analyzer"))))
+
+(defun gp/c-cpp-common-setup ()
+  "Common C/C++ editing defaults."
+  (setq-local c-basic-offset 4)
+  (setq-local tab-width 4)
+  (setq-local indent-tabs-mode nil))
+
+(add-hook 'c-mode-hook #'gp/c-cpp-common-setup)
+(add-hook 'c++-mode-hook #'gp/c-cpp-common-setup)
+(add-hook 'c-ts-mode-hook #'gp/c-cpp-common-setup)
+(add-hook 'c++-ts-mode-hook #'gp/c-cpp-common-setup)
+
+(defun gp/python-setup ()
+  "Python editing defaults."
+  (setq-local tab-width 4)
+  (setq-local indent-tabs-mode nil))
+
+(add-hook 'python-mode-hook #'gp/python-setup)
+(add-hook 'python-ts-mode-hook #'gp/python-setup)
+
+(defun gp/rust-setup ()
+  "Rust editing defaults."
+  (setq-local tab-width 4)
+  (setq-local indent-tabs-mode nil))
+
+(add-hook 'rust-mode-hook #'gp/rust-setup)
+(add-hook 'rust-ts-mode-hook #'gp/rust-setup)
+
+(use-package flymake
+  :ensure nil
+  :defer nil
+  :bind
+  (("C-c ! l" . flymake-show-buffer-diagnostics)
+   ("C-c ! n" . flymake-goto-next-error)
+   ("C-c ! p" . flymake-goto-prev-error)))
+
+(defun gp/format-buffer-with-eglot ()
+  "Format current buffer via Eglot if available."
+  (interactive)
+  (if (bound-and-true-p eglot--managed-mode)
+      (eglot-format-buffer)
+    (message "Current buffer is not managed by Eglot")))
+
+(global-set-key (kbd "C-c l F") #'gp/format-buffer-with-eglot)
+
+(message "Loaded programming/LSP configuration")
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Es wird bewusst =eglot= verwendet, weil es in modernen Emacs-Versionen integriert ist und weniger komplex ist als =lsp-mode=.
+
+Sprachserver:
+
+- C/C++: =clangd=
+- Python: =pyright-langserver=
+- Rust: =rust-analyzer=
+
+Rust benötigt zusätzlich =rust-mode=, weil sonst =.rs=-Dateien ggf. nicht automatisch als Rust erkannt werden.
+
+** Überprüfen
+
+In Emacs:
+
+#+begin_example
+M-x gp/treesit-install-missing-grammars
+#+end_example
+
+Dann mit =M-:= prüfen:
+
+#+begin_src emacs-lisp
+(executable-find "pyright-langserver")
+(executable-find "rust-analyzer")
+(file-executable-p "/opt/homebrew/opt/llvm/bin/clangd")
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+"/opt/homebrew/bin/pyright-langserver"
+"/opt/homebrew/opt/rustup/bin/rust-analyzer"
+t
+#+end_example
+
+Pfade können leicht abweichen.
+
+* 7. Org-mode konfigurieren
+
+** Installationsanweisung
+
+Folgenden Block an =init.el= anhängen:
+
+#+begin_src emacs-lisp
+;;; ---------------------------------------------------------------------------
+;;; Org-mode setup
+;;; ---------------------------------------------------------------------------
+
+(use-package org
+  :ensure nil
+  :defer nil
+  :mode ("\\.org\\'" . org-mode)
+  :bind
+  (("C-c o a" . org-agenda)
+   ("C-c o c" . org-capture)
+   ("C-c o l" . org-store-link)
+   ("C-c o n" . gp/open-org-notes)
+   ("C-c o t" . gp/open-org-tasks)
+   ("C-c o p" . gp/open-org-ai-prompts))
+  :config
+  (setq org-directory (expand-file-name "~/org"))
+  (setq org-default-notes-file (expand-file-name "notes.org" org-directory))
+
+  (setq org-agenda-files
+        (list (expand-file-name "tasks.org" org-directory)
+              (expand-file-name "notes.org" org-directory)
+              (expand-file-name "projects" org-directory)))
+
+  (setq org-startup-indented t)
+  (setq org-hide-emphasis-markers t)
+  (setq org-return-follows-link t)
+  (setq org-log-done 'time)
+  (setq org-use-speed-commands t)
+  (setq org-confirm-babel-evaluate nil)
+
+  (setq org-todo-keywords
+        '((sequence "TODO(t)" "NEXT(n)" "WAIT(w@/!)" "|" "DONE(d)" "CANCELLED(c@)")))
+
+  (setq org-log-into-drawer t)
+  (setq org-archive-location
+        (expand-file-name "archive/%s_archive::" org-directory))
+
+  (setq org-src-preserve-indentation nil)
+  (setq org-edit-src-content-indentation 0)
+  (setq org-src-tab-acts-natively t)
+  (setq org-src-fontify-natively t)
+
+  (org-babel-do-load-languages
+   'org-babel-load-languages
+   '((C . t)
+     (python . t)
+     (shell . t)
+     (emacs-lisp . t)))
+
+  (setq org-capture-templates
+        '(("t" "Task" entry
+           (file "~/org/tasks.org")
+           "* TODO %?\n  CREATED: %U\n")
+
+          ("n" "Note" entry
+           (file "~/org/notes.org")
+           "* %?\n  CREATED: %U\n")
+
+          ("p" "AI Prompt" entry
+           (file "~/org/ai/prompts.org")
+           "* %^{Title}\n  CREATED: %U\n\n** Context\n%?\n\n** Prompt\n\n** Result\n\n** Follow-up\n"))))
+
+(defun gp/open-org-notes ()
+  "Open main Org notes file."
+  (interactive)
+  (find-file (expand-file-name "~/org/notes.org")))
+
+(defun gp/open-org-tasks ()
+  "Open main Org tasks file."
+  (interactive)
+  (find-file (expand-file-name "~/org/tasks.org")))
+
+(defun gp/open-org-ai-prompts ()
+  "Open AI prompt Org file."
+  (interactive)
+  (find-file (expand-file-name "~/org/ai/prompts.org")))
+
+(use-package ob-rust
+  :after org
+  :demand t
+  :config
+  (let ((rustup-bin "/opt/homebrew/opt/rustup/bin")
+        (cargo-bin (expand-file-name "~/.cargo/bin")))
+    (dolist (dir (list rustup-bin cargo-bin))
+      (when (file-directory-p dir)
+        (setenv "PATH" (concat dir path-separator (getenv "PATH")))
+        (add-to-list 'exec-path dir))))
+
+  (add-to-list 'org-babel-load-languages '(rust . t))
+  (org-babel-do-load-languages
+   'org-babel-load-languages
+   org-babel-load-languages)
+
+  (setq org-babel-default-header-args:rust
+        '((:results . "output replace")
+          (:exports . "both"))))
+
+(with-eval-after-load 'org
+  (setq org-babel-python-command "python3")
+  (setq org-babel-default-header-args:python
+        '((:results . "output replace")
+          (:exports . "both")))
+  (setq org-babel-C-compiler "/opt/homebrew/opt/llvm/bin/clang")
+  (setq org-babel-C++-compiler "/opt/homebrew/opt/llvm/bin/clang++"))
+
+(use-package org-modern
+  :hook (org-mode . org-modern-mode)
+  :config
+  (setq org-modern-star 'replace)
+  (setq org-modern-table nil))
+
+(message "Loaded Org-mode configuration")
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Diese Konfiguration richtet Org-mode für Notizen, Tasks, AI-Prompts und ausführbare Code-Blöcke ein.
+
+Wichtige Korrekturen:
+
+- Python verwendet =python3= statt =python=.
+- Python-Blocks verwenden =:results output replace=, damit =print(...)= korrekt ausgegeben wird.
+- Rust-Blocks verwenden =ob-rust= und benötigen extern =rust-script=.
+
+** Überprüfen
+
+Org-Verzeichnisse anlegen:
+#+begin_src shell
+mkdir -p ~/org/projects ~/org/ai ~/org/archive
+touch ~/org/notes.org ~/org/tasks.org ~/org/ai/prompts.org
+#+end_src
+
+In Emacs testen:
+
+#+begin_example
+C-c o n
+C-c o t
+C-c o p
+#+end_example
+
+Python-Block testen:
+
+#+begin_src org
+#+begin_src python
+print("hello from org python block")
+#+end_src
+#+end_src
+
+Rust-Block testen:
+
+#+begin_src org
+#+begin_src rust
+fn main() {
+    println!("hello from org rust block");
+}
+#+end_src
+#+end_src
+
+** Erwartete Ausgabe
+
+Python:
+
+#+begin_example
+#+RESULTS:
+: hello from org python block
+#+end_example
+
+Rust:
+
+#+begin_example
+#+RESULTS:
+: hello from org rust block
+#+end_example
+
+* 8. Org-mode PDF-Export über LaTeX konfigurieren
+
+** Installationsanweisung
+
+Folgenden Block an =init.el= anhängen:
+
+#+begin_src emacs-lisp
+;;; ---------------------------------------------------------------------------
+;;; Org-mode PDF export via LaTeX
+;;; ---------------------------------------------------------------------------
+
+Falls Emacs =latexmk= oder =lualatex= nicht findet, zusätzlich den TeX-Pfad ergänzen:
+
+#+begin_src emacs-lisp
+(when (eq system-type 'darwin)
+  (let ((texbin "/Library/TeX/texbin"))
+    (when (file-directory-p texbin)
+      (setenv "PATH" (concat texbin path-separator (getenv "PATH")))
+      (add-to-list 'exec-path texbin))))
+#+end_src
+
+(with-eval-after-load 'ox-latex
+  (setq org-latex-compiler "lualatex")
+  (setq org-latex-pdf-process
+        '("latexmk -lualatex -shell-escape -interaction=nonstopmode -f %f")))
+
+(message "Loaded Org PDF export configuration")
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Der empfohlene PDF-Weg ist:
+
+#+begin_example
+.org -> Org LaTeX Export -> .tex -> latexmk/lualatex -> PDF
+#+end_example
+
+=lualatex= ist auf macOS sinnvoll, weil Unicode und moderne Fonts besser funktionieren als mit klassischem =pdflatex=.
+
+=latexmk= automatisiert Mehrfachläufe für Inhaltsverzeichnis, Referenzen und andere LaTeX-Abhängigkeiten.
+
+** Überprüfen
+
+In Emacs mit =M-:=:
+
+#+begin_src emacs-lisp
+(executable-find "latexmk")
+(executable-find "lualatex")
+#+end_src
+
+Beispiel-Org-Datei:
+
+#+begin_src org
+#+title: Test PDF
+#+author: Georg Pohl
+#+language: de
+#+options: toc:t num:t
+#+latex_compiler: lualatex
+
+* Einleitung
+
+Dies ist ein Testdokument mit Umlauten: ä ö ü Ä Ö Ü ß.
+#+end_src
+
+Export in Org-mode:
+
+#+begin_example
+C-c C-e l p
+#+end_example
+
+oder PDF erzeugen und öffnen:
+
+#+begin_example
+C-c C-e l o
+#+end_example
+
+** Erwartete Ausgabe
+
+=executable-find= sollte z. B. liefern:
+
+#+begin_example
+"/Library/TeX/texbin/latexmk"
+"/Library/TeX/texbin/lualatex"
+#+end_example
+
+Nach dem Export sollte neben der =.org=-Datei eine =.pdf=-Datei entstehen.
+
+* 9. AI-Workflow mit vterm, Codex, Claude und Magit
+
+** Installationsanweisung
+
+Folgenden Block an =init.el= anhängen:
+
+#+begin_src emacs-lisp
+;;; ---------------------------------------------------------------------------
+;;; AI workflow support: vterm, Codex, Claude Code, Magit
+;;; ---------------------------------------------------------------------------
+
+(use-package vterm
+  :commands (vterm)
+  :config
+  (setq vterm-max-scrollback 20000)
+  (setq vterm-shell (or (getenv "SHELL") "/bin/zsh")))
+
+(defun gp/project-root-or-default ()
+  "Return current project root or `default-directory'."
+  (if-let ((project (project-current)))
+      (project-root project)
+    default-directory))
+
+(defun gp/vterm-in-project (buffer-name &optional command)
+  "Open vterm in current project root.
+If COMMAND is non-nil, send it to the terminal."
+  (interactive)
+  (let ((default-directory (gp/project-root-or-default)))
+    (vterm buffer-name)
+    (when command
+      (vterm-send-string command)
+      (vterm-send-return))))
+
+(defun gp/ai-codex ()
+  "Start Codex CLI in a vterm at the current project root."
+  (interactive)
+  (gp/vterm-in-project "*ai-codex*" "codex"))
+
+(defun gp/ai-claude ()
+  "Start Claude Code in a vterm at the current project root."
+  (interactive)
+  (gp/vterm-in-project "*ai-claude*" "claude"))
+
+(defun gp/ai-shell ()
+  "Open a plain AI work shell in a vterm at the current project root."
+  (interactive)
+  (gp/vterm-in-project "*ai-shell*"))
+
+(defun gp/open-ai-prompts ()
+  "Open main AI prompts Org file."
+  (interactive)
+  (find-file (expand-file-name "~/org/ai/prompts.org")))
+
+(defun gp/new-ai-session-note ()
+  "Create a timestamped AI session note."
+  (interactive)
+  (let* ((ts (format-time-string "%Y%m%d-%H%M%S"))
+         (file (expand-file-name
+                (format "~/org/ai/sessions/session-%s.org" ts))))
+    (find-file file)
+    (insert "#+title: AI Session " ts "\n")
+    (insert "#+created: " (format-time-string "%Y-%m-%d %H:%M:%S %z") "\n\n")
+    (insert "* Context\n\n")
+    (insert "* Prompt\n\n")
+    (insert "* Result\n\n")
+    (insert "* Review\n\n")))
+
+(defun gp/copy-region-or-buffer-for-ai ()
+  "Copy active region, or whole buffer if no region is active, to kill ring."
+  (interactive)
+  (if (use-region-p)
+      (progn
+        (kill-ring-save (region-beginning) (region-end))
+        (message "Copied region for AI"))
+    (progn
+      (kill-ring-save (point-min) (point-max))
+      (message "Copied whole buffer for AI"))))
+
+(use-package magit
+  :commands (magit-status magit-diff-buffer-file magit-log-buffer-file)
+  :bind
+  (("C-c m s" . magit-status)
+   ("C-c m d" . magit-diff-buffer-file)
+   ("C-c m l" . magit-log-buffer-file)))
+
+(global-set-key (kbd "C-c a c") #'gp/ai-codex)
+(global-set-key (kbd "C-c a C") #'gp/ai-claude)
+(global-set-key (kbd "C-c a s") #'gp/ai-shell)
+(global-set-key (kbd "C-c a p") #'gp/open-ai-prompts)
+(global-set-key (kbd "C-c a n") #'gp/new-ai-session-note)
+(global-set-key (kbd "C-c a y") #'gp/copy-region-or-buffer-for-ai)
+
+(message "Loaded AI workflow configuration")
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+AI-Tools laufen bewusst im Terminal innerhalb von Emacs über =vterm=. Emacs bleibt die Steuerzentrale:
+
+- Codex für primären ChatGPT/OpenAI-Codeworkflow
+- Claude Code als sekundäres AI-Werkzeug
+- Magit für Review der Änderungen
+
+Magit verwendet =C-c m ...=, damit kein Konflikt mit =C-c g= für =consult-grep= entsteht.
+
+** Überprüfen
+
+#+begin_src shell
+mkdir -p ~/org/ai/prompts ~/org/ai/sessions ~/org/ai/context ~/org/ai/reviews
+#+End_src
+
+In Emacs:
+
+#+begin_example
+M-x vterm
+C-c a c
+C-c a C
+C-c m s
+#+end_example
+
+** Erwartete Ausgabe
+
+- =M-x vterm= öffnet ein Terminal in Emacs.
+- =C-c a c= startet =codex= in einem vterm-Buffer.
+- =C-c a C= startet =claude= in einem vterm-Buffer.
+- =C-c m s= öffnet =magit-status=.
+
+* 10. Theme, Fonts und 80-Spalten-Overflow konfigurieren
+
+** Installationsanweisung
+
+Folgenden Block an =init.el= anhängen:
+
+#+begin_src emacs-lisp
+;;; ---------------------------------------------------------------------------
+;;; Custom dark no-magenta theme, fonts, Org readability, 80-column overflow
+;;; ---------------------------------------------------------------------------
+
+(defun gp/font-available-p (font-name)
+  "Return non-nil if FONT-NAME is available."
+  (member font-name (font-family-list)))
+
+(defun gp/first-available-font (&rest fonts)
+  "Return first available font from FONTS."
+  (seq-find #'gp/font-available-p fonts))
+
+(defun gp/setup-fonts ()
+  "Configure coding and text fonts."
+  (let ((code-font (gp/first-available-font
+                    "JetBrainsMono Nerd Font Mono"
+                    "JetBrainsMono Nerd Font"
+                    "JetBrains Mono"
+                    "Menlo"
+                    "Monaco"))
+        (text-font (gp/first-available-font
+                    "Avenir Next"
+                    "Helvetica Neue"
+                    "Helvetica")))
+    (when code-font
+      (set-face-attribute 'default nil
+                          :family code-font
+                          :height 145
+                          :weight 'regular)
+      (set-face-attribute 'fixed-pitch nil
+                          :family code-font
+                          :height 145
+                          :weight 'regular))
+    (when text-font
+      (set-face-attribute 'variable-pitch nil
+                          :family text-font
+                          :height 155
+                          :weight 'regular))))
+
+(gp/setup-fonts)
+
+(defun gp/apply-no-magenta-dark-theme ()
+  "Apply a dark coding theme without purple/magenta colors."
+  (interactive)
+  (require 'whitespace nil t)
+  (require 'hl-line nil t)
+  (mapc #'disable-theme custom-enabled-themes)
+
+  (set-face-attribute 'default nil :background "#0f1419" :foreground "#d8dee9")
+  (set-face-attribute 'cursor nil :background "#88c0d0")
+  (set-face-attribute 'fringe nil :background "#0f1419")
+  (set-face-attribute 'region nil :background "#2f3b4a")
+  (set-face-attribute 'highlight nil :background "#243447")
+  (when (facep 'hl-line)
+    (set-face-attribute 'hl-line nil :background "#18222f" :extend t))
+  (set-face-attribute 'minibuffer-prompt nil :foreground "#88c0d0" :weight 'bold)
+
+  (set-face-attribute 'line-number nil :foreground "#4c566a" :background "#0f1419")
+  (set-face-attribute 'line-number-current-line nil :foreground "#eceff4" :background "#18222f" :weight 'bold)
+
+  (set-face-attribute 'font-lock-comment-face nil :foreground "#6b7280" :slant 'italic)
+  (set-face-attribute 'font-lock-doc-face nil :foreground "#7f8c98" :slant 'italic)
+  (set-face-attribute 'font-lock-keyword-face nil :foreground "#81a1c1" :weight 'bold)
+  (set-face-attribute 'font-lock-builtin-face nil :foreground "#88c0d0")
+  (set-face-attribute 'font-lock-function-name-face nil :foreground "#88c0d0" :weight 'bold)
+  (set-face-attribute 'font-lock-variable-name-face nil :foreground "#d8dee9")
+  (set-face-attribute 'font-lock-type-face nil :foreground "#ebcb8b" :weight 'bold)
+  (set-face-attribute 'font-lock-constant-face nil :foreground "#d08770")
+  (set-face-attribute 'font-lock-string-face nil :foreground "#a3be8c")
+  (set-face-attribute 'font-lock-preprocessor-face nil :foreground "#5e81ac" :weight 'bold)
+  (set-face-attribute 'font-lock-warning-face nil :foreground "#ff6b6b" :background "#3a1f1f" :weight 'bold)
+
+  (set-face-attribute 'flymake-error nil :underline '(:style wave :color "#ff6b6b"))
+  (set-face-attribute 'flymake-warning nil :underline '(:style wave :color "#ebcb8b"))
+  (set-face-attribute 'flymake-note nil :underline '(:style wave :color "#88c0d0"))
+
+  (set-face-attribute 'match nil :background "#2e4a3f" :foreground "#e5e9f0" :weight 'bold)
+  (set-face-attribute 'isearch nil :background "#ebcb8b" :foreground "#0f1419" :weight 'bold)
+  (set-face-attribute 'lazy-highlight nil :background "#3b4252" :foreground "#eceff4")
+
+  (when (facep 'whitespace-line)
+    (set-face-attribute 'whitespace-line nil
+                        :background "#5f0000"
+                        :foreground "#ffb3b3"
+                        :weight 'bold))
+
+  (with-eval-after-load 'org
+    (set-face-attribute 'org-level-1 nil :foreground "#88c0d0" :weight 'bold :height 1.25)
+    (set-face-attribute 'org-level-2 nil :foreground "#81a1c1" :weight 'bold :height 1.15)
+    (set-face-attribute 'org-level-3 nil :foreground "#a3be8c" :weight 'bold :height 1.08)
+    (set-face-attribute 'org-level-4 nil :foreground "#ebcb8b" :weight 'bold :height 1.03)
+    (set-face-attribute 'org-block nil :background "#111827" :foreground "#d8dee9" :inherit 'fixed-pitch)
+    (set-face-attribute 'org-block-begin-line nil :background "#1f2937" :foreground "#7f8c98" :inherit 'fixed-pitch)
+    (set-face-attribute 'org-block-end-line nil :background "#1f2937" :foreground "#7f8c98" :inherit 'fixed-pitch)
+    (set-face-attribute 'org-code nil :foreground "#a3be8c" :inherit 'fixed-pitch)
+    (set-face-attribute 'org-verbatim nil :foreground "#ebcb8b" :inherit 'fixed-pitch)))
+
+(gp/apply-no-magenta-dark-theme)
+(global-hl-line-mode 1)
+
+(use-package whitespace
+  :ensure nil
+  :config
+  (setq whitespace-style '(face lines-tail))
+  (setq whitespace-line-column 80)
+  (set-face-attribute 'whitespace-line nil
+                      :background "#5f0000"
+                      :foreground "#ffb3b3"
+                      :weight 'bold))
+
+(defun gp/code-visual-line-length-mode ()
+  "Highlight only characters beyond column 80 in code buffers.
+Do not show a vertical fill-column ruler."
+  (setq-local fill-column 80)
+  (setq-local whitespace-style '(face lines-tail))
+  (setq-local whitespace-line-column 80)
+  (when (bound-and-true-p display-fill-column-indicator-mode)
+    (display-fill-column-indicator-mode -1))
+  (whitespace-mode 1))
+
+(add-hook 'prog-mode-hook #'gp/code-visual-line-length-mode)
+
+(defun gp/org-visual-setup ()
+  "Improve Org readability while preserving fixed-pitch code areas."
+  (variable-pitch-mode 1)
+  (visual-line-mode 1)
+  (dolist (face '(org-block
+                  org-block-begin-line
+                  org-block-end-line
+                  org-code
+                  org-verbatim
+                  org-table
+                  org-meta-line
+                  org-property-value
+                  org-special-keyword
+                  org-drawer
+                  org-date
+                  org-checkbox))
+    (set-face-attribute face nil :inherit 'fixed-pitch))
+  (display-fill-column-indicator-mode -1)
+  (whitespace-mode -1))
+
+(add-hook 'org-mode-hook #'gp/org-visual-setup)
+
+(defun gp/toggle-code-line-length-highlighting ()
+  "Toggle red highlighting for characters beyond column 80."
+  (interactive)
+  (if (bound-and-true-p whitespace-mode)
+      (progn
+        (whitespace-mode -1)
+        (when (bound-and-true-p display-fill-column-indicator-mode)
+          (display-fill-column-indicator-mode -1))
+        (message "80-column overflow highlighting disabled"))
+    (gp/code-visual-line-length-mode)
+    (message "80-column overflow highlighting enabled")))
+
+(global-set-key (kbd "C-c v 8") #'gp/toggle-code-line-length-highlighting)
+
+(message "Loaded visual profile configuration")
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Diese Konfiguration verwendet kein externes Theme, sondern eine eigene dunkle Palette ohne Magenta/Purple-Töne.
+
+Die 80-Zeichen-Regel markiert nur die Zeichen nach Spalte 80 rot. Es wird keine vertikale Linie angezeigt.
+
+Org-mode verwendet variable-pitch für normalen Text, aber fixed-pitch für Code, Tabellen und technische Bereiche.
+
+** Überprüfen
+
+In Emacs mit =M-:=:
+
+#+begin_src emacs-lisp
+(face-attribute 'default :family)
+#+end_src
+
+Code-Datei mit langer Zeile öffnen:
+
+#+begin_example
+C-x C-f ~/tmp/line-length-test.c
+#+end_example
+
+** Erwartete Ausgabe
+
+- Coding-Font ist idealerweise =JetBrainsMono Nerd Font Mono= oder ein Fallback.
+- Kein vertikaler roter 80-Spalten-Strich.
+- Nur Zeichen nach Spalte 80 werden rot markiert.
+- Org-Prosa ist lesbar und Codebereiche bleiben monospaced.
+
+* 11. Batch-Test der kompletten Emacs-Konfiguration
+
+** Installationsanweisung
+
+#+begin_src shell
+/Applications/Emacs.app/Contents/MacOS/Emacs \
+  --batch \
+  --init-directory "$HOME/.config/emacs-power" \
+  --eval '(message "Full power config batch check OK")'
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Der Batch-Test ist die schnellste Prüfung, ob die Konfiguration syntaktisch und grundsätzlich ladbar ist. Er startet keine GUI.
+
+** Überprüfen
+
+Der obige Befehl ist der Prüfschritt.
+
+** Erwartete Ausgabe
+
+#+begin_example
+Loaded power-user Emacs base config
+Loaded completion/navigation configuration
+Loaded programming/LSP configuration
+Loaded Org-mode configuration
+Loaded Org PDF export configuration
+Loaded AI workflow configuration
+Loaded visual profile configuration
+Full power config batch check OK
+#+end_example
+
+Je nach Lade-Reihenfolge können einzelne Meldungen variieren. Entscheidend ist: kein Lisp-Fehler.
+
+* 12. Direkter GUI-Test
+
+** Installationsanweisung
+
+#+begin_src shell
+emacs-power-direct
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Der direkte Start ist der beste Debug-Modus. Wenn etwas in =init.el= oder =early-init.el= defekt ist, erscheint der Fehler direkt beim Start.
+
+Bei schwereren Fehlern:
+
+#+begin_src shell
+/Applications/Emacs.app/Contents/MacOS/Emacs \
+  --debug-init \
+  --init-directory "$HOME/.config/emacs-power"
+#+End_src
+
+** Überprüfen
+
+In Emacs:
+
+#+begin_example
+C-h e
+#+end_example
+
+** Erwartete Ausgabe
+
+Die Messages sollten die geladenen Konfigurationsabschnitte zeigen, z. B.:
+
+#+begin_example
+Loaded power-user Emacs base config
+Loaded programming/LSP configuration
+Loaded Org-mode configuration
+Loaded AI workflow configuration
+Loaded visual profile configuration
+#+end_example
+
+* 13. Daemon-/Client-Funktionen konfigurieren
+
+** Installationsanweisung
+
+In =~/.zshrc= sollten folgende Funktionen vorhanden sein:
+
+#+begin_src shell
+emacs-power-socket() {
+  printf "%s/emacs%s/power" "${TMPDIR%/}" "$(id -u)"
+}
+
+emacs-power-start() {
+  local sock
+  sock="$(emacs-power-socket)"
+
+  if [ -S "$sock" ] && emacsclient -s "$sock" -e '(emacs-pid)' >/dev/null 2>&1; then
+    echo "Emacs power daemon already running: $sock"
+    return 0
+  fi
+
+  /Applications/Emacs.app/Contents/MacOS/Emacs \
+    --init-directory "$HOME/.config/emacs-power" \
+    --daemon=power \
+    > /tmp/emacs-power-daemon.log 2>&1 &
+
+  disown
+}
+
+emacs-power-gui() {
+  emacsclient -s "$(emacs-power-socket)" -n -c "$@"
+}
+
+emacs-power-term() {
+  emacsclient -s "$(emacs-power-socket)" -t "$@"
+}
+
+emacs-power-stop() {
+  emacsclient -s "$(emacs-power-socket)" -e "(kill-emacs)"
+}
+
+emacs-power-restart() {
+  emacs-power-stop 2>/dev/null || true
+  sleep 1
+  emacs-power-start
+}
+
+emacs-power-status() {
+  pgrep -af Emacs || true
+  echo "Socket: $(emacs-power-socket)"
+  ls -l "$(emacs-power-socket)" 2>/dev/null || true
+}
+
+emacs-power-log() {
+  tail -100 /tmp/emacs-power-daemon.log
+}
+
+emacs-power-batch-check() {
+  /Applications/Emacs.app/Contents/MacOS/Emacs \
+    --batch \
+    --init-directory "$HOME/.config/emacs-power" \
+    --eval '(message "Power config batch check OK")'
+}
+
+emacs-power-direct() {
+  /Applications/Emacs.app/Contents/MacOS/Emacs \
+    --init-directory "$HOME/.config/emacs-power" "$@"
+}
+
+emacs-minimal-direct() {
+  /Applications/Emacs.app/Contents/MacOS/Emacs \
+    --init-directory "$HOME/.config/emacs-minimal" "$@"
+}
+#+end_src
+
+Danach:
+
+#+begin_src shell
+source ~/.zshrc
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Die Funktionen verwenden den expliziten Socket-Pfad:
+
+#+begin_example
+$TMPDIR/emacs$(id -u)/power
+#+end_example
+
+Das war in der Praxis zuverlässiger als nur =emacsclient -s power=.
+
+** Überprüfen
+
+#+begin_src shell
+type emacs-power-start
+type emacs-power-gui
+type emacs-power-direct
+type emacs-minimal-direct
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+emacs-power-start is a shell function from /Users/<user>/.zshrc
+emacs-power-gui is a shell function from /Users/<user>/.zshrc
+emacs-power-direct is a shell function from /Users/<user>/.zshrc
+emacs-minimal-direct is a shell function from /Users/<user>/.zshrc
+#+end_example
+
+* 14. Finaler Daemon- und GUI-Test
+
+** Installationsanweisung
+
+Daemon starten:
+
+#+begin_src shell
+emacs-power-start
+#+end_src
+
+Status prüfen:
+
+#+begin_src shell
+sleep 2
+emacs-power-status
+#+end_src
+
+GUI-Client öffnen:
+
+#+begin_src shell
+emacs-power-gui
+#+end_src
+
+Terminal-Client öffnen:
+
+#+begin_src shell
+emacs-power-term
+#+end_src
+
+Terminal-Client mit =C-x C-c= verlassen.
+
+Daemon stoppen:
+
+#+begin_src shell
+emacs-power-stop
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Das ist der produktive Zielmodus:
+
+#+begin_src shell
+emacs-power-start
+emacs-power-gui
+#+end_src
+
+Der Daemon hält die Session. GUI- und Terminal-Clients verbinden sich mit derselben Emacs-Instanz.
+
+** Überprüfen
+
+#+begin_src shell
+emacs-power-start
+sleep 2
+emacs-power-status
+emacsclient -s "$(emacs-power-socket)" -e '(emacs-pid)'
+emacs-power-gui
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+Socket: /var/folders/.../T/emacs501/power
+srwx------ ... /var/folders/.../T/emacs501/power
+33430
+#+end_example
+
+Beim Aufruf von =emacs-power-gui= öffnet sich ein GUI-Fenster, und die Shell kehrt sofort zurück.
+
+* 15. Wichtige Keybindings
+
+** Installationsanweisung
+
+Keine zusätzliche Installation. Die Keybindings werden durch die vorherigen Konfigurationsblöcke gesetzt.
+
+** Erläuterungen / Erklärungen
+
+Wichtige Tastenkombinationen:
+
+#+begin_example
+C-s       consult-line
+C-x b     consult-buffer
+C-c f     consult-find
+C-c g     consult-grep
+C-c r     consult-ripgrep
+C-c i     consult-imenu
+
+C-c l r   eglot-rename
+C-c l a   eglot-code-actions
+C-c l f   eglot-format
+C-c l F   format current buffer via Eglot
+
+C-c ! l   flymake-show-buffer-diagnostics
+C-c ! n   flymake-goto-next-error
+C-c ! p   flymake-goto-prev-error
+
+C-c o a   org-agenda
+C-c o c   org-capture
+C-c o n   open notes.org
+C-c o t   open tasks.org
+C-c o p   open AI prompts
+
+C-c a c   start Codex in vterm
+C-c a C   start Claude Code in vterm
+C-c a s   open AI shell
+C-c a p   open AI prompts
+C-c a n   new AI session note
+C-c a y   copy region or buffer for AI
+
+C-c m s   magit-status
+C-c m d   magit-diff-buffer-file
+C-c m l   magit-log-buffer-file
+
+C-c v 8   toggle 80-column overflow highlighting
+#+end_example
+
+** Überprüfen
+
+In Emacs:
+
+#+begin_example
+C-h k C-c a c
+C-h k C-c m s
+C-h k C-c v 8
+#+end_example
+
+** Erwartete Ausgabe
+
+Emacs zeigt jeweils die zugeordnete Funktion an, z. B.:
+
+#+begin_example
+C-c a c runs the command gp/ai-codex
+C-c m s runs the command magit-status
+C-c v 8 runs the command gp/toggle-code-line-length-highlighting
+#+end_example
+
+* 16. Fallback und Rollback
+
+** Installationsanweisung
+
+Minimal-Fallback starten:
+
+#+begin_src shell
+emacs-minimal-direct
+#+end_src
+
+Power-Konfiguration direkt debuggen:
+
+#+begin_src shell
+emacs-power-direct
+#+end_src
+
+Batch-Test:
+
+#+begin_src shell
+emacs-power-batch-check
+#+end_src
+
+Rollback auf Backup:
+
+#+begin_src shell
+rm -rf ~/.config/emacs-power
+cp -a ~/.config/emacs-power.before-change.YYYYMMDD-HHMMSS ~/.config/emacs-power
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Die getrennte Minimal-Konfiguration ist der wichtigste Recovery-Pfad. Wenn die Power-Konfiguration nicht startet, kann Emacs weiterhin minimal gestartet werden.
+
+** Überprüfen
+
+#+begin_src shell
+emacs-minimal-direct
+#+end_src
+
+** Erwartete Ausgabe
+
+Emacs startet mit Minimal-Konfiguration und zeigt in =*Messages*=:
+
+#+begin_example
+Loaded minimal fallback Emacs config
+#+end_example
+
+* 17. Wartung
+
+** Installationsanweisung
+
+Homebrew-Komponenten aktualisieren:
+
+#+begin_src shell
+brew update
+brew upgrade
+brew upgrade --cask emacs-plus-app
+brew upgrade --cask codex
+brew upgrade --cask claude-code
+#+end_src
+
+Rust aktualisieren:
+
+#+begin_src shell
+rustup update
+rustup component add rust-analyzer rust-src
+cargo install rust-script --force
+#+end_src
+
+Emacs-Pakete aktualisieren:
+
+#+begin_example
+M-x package-refresh-contents
+M-x package-list-packages
+#+end_example
+
+** Erläuterungen / Erklärungen
+
+Nach größeren Updates ist ein Batch-Test sinnvoll:
+
+#+begin_src shell
+emacs-power-batch-check
+#+end_src
+
+Bei Problemen zuerst direkt starten:
+
+#+begin_src shell
+emacs-power-direct
+#+end_src
+
+** Überprüfen
+
+#+begin_src shell
+emacs-power-batch-check
+#+end_src
+
+** Erwartete Ausgabe
+
+#+begin_example
+Power config batch check OK
+#+end_example
+
+* 18. Ergebnis
+
+** Installationsanweisung
+
+Normaler Start:
+
+#+begin_src shell
+emacs-power-start
+emacs-power-gui
+#+end_src
+
+** Erläuterungen / Erklärungen
+
+Nach dieser Konfiguration steht folgende Architektur zur Verfügung:
+
+#+begin_example
+Emacs Plus GUI
+    +
+Power-Konfiguration in ~/.config/emacs-power
+    +
+benannter Daemon power
+    +
+emacsclient GUI/Terminal
+    +
+C/C++/Python/Rust LSP
+    +
+Org-mode mit Babel und PDF-Export
+    +
+vterm für AI-CLI-Tools
+    +
+Magit für Review
+    +
+Minimal-Fallback
+#+end_example
+
+** Überprüfen
+
+#+begin_src shell
+emacs-power-start
+sleep 2
+emacs-power-status
+emacs-power-gui
+#+end_src
+
+** Erwartete Ausgabe
+
+- Daemon läuft.
+- Socket existiert.
+- GUI öffnet ohne Socket-Fehler.
+- Power-Konfiguration lädt ohne Lisp-Fehler.
