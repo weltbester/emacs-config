@@ -1,9 +1,3 @@
-;;; init.el --- Power-user Emacs config placeholder
-
-(setq inhibit-startup-screen t)
-
-(message "Loaded power-user Emacs config placeholder")
-
 ;;; init.el --- Power-user Emacs base config
 
 ;;; Basic startup behavior
@@ -76,8 +70,12 @@
 
 (setq-default indent-tabs-mode nil)
 (setq-default tab-width 4)
+(setq-default fill-column 80)
 (setq require-final-newline t)
 (setq ring-bell-function 'ignore)
+
+(use-package column-enforce-mode
+  :hook (prog-mode . column-enforce-mode))
 
 (global-display-line-numbers-mode 1)
 (column-number-mode 1)
@@ -89,6 +87,7 @@
 (setq history-length 200)
 
 (show-paren-mode 1)
+(electric-pair-mode 1)
 (global-auto-revert-mode 1)
 (setq global-auto-revert-non-file-buffers t)
 
@@ -97,8 +96,6 @@
 (use-package project
   :ensure nil
   :defer nil)
-
-(message "Loaded power-user Emacs base config")
 
 ;;; ---------------------------------------------------------------------------
 ;;; Completion and navigation
@@ -170,8 +167,6 @@
         ("C-l" . vertico-directory-up))
   :hook
   (rfn-eshadow-update-overlay . vertico-directory-tidy))
-
-(message "Loaded completion/navigation configuration")
 
 ;;; ---------------------------------------------------------------------------
 ;;; Programming foundation: Tree-sitter, Eglot, C/C++, Python, Rust
@@ -416,18 +411,16 @@
 ;;; Org-mode PDF export via LaTeX
 ;;; ---------------------------------------------------------------------------
 
-;;; Falls Emacs =latexmk= oder =lualatex= nicht findet, zusätzlich den TeX-Pfad ergänzen:
+(with-eval-after-load 'ox-latex
+  (setq org-latex-compiler "lualatex")
+  (setq org-latex-pdf-process
+        '("/Library/TeX/texbin/latexmk -lualatex -shell-escape -interaction=nonstopmode -f %f")))
 
 (when (eq system-type 'darwin)
   (let ((texbin "/Library/TeX/texbin"))
     (when (file-directory-p texbin)
       (setenv "PATH" (concat texbin path-separator (getenv "PATH")))
       (add-to-list 'exec-path texbin))))
-
-(with-eval-after-load 'ox-latex
-  (setq org-latex-compiler "lualatex")
-  (setq org-latex-pdf-process
-        '("latexmk -lualatex -shell-escape -interaction=nonstopmode -f %f")))
 
 (message "Loaded Org PDF export configuration")
 
@@ -563,7 +556,6 @@ If COMMAND is non-nil, send it to the terminal."
   "Apply a dark coding theme without purple/magenta colors."
   (interactive)
   (require 'whitespace nil t)
-  (require 'hl-line nil t)
   (mapc #'disable-theme custom-enabled-themes)
 
   (set-face-attribute 'default nil :background "#0f1419" :foreground "#d8dee9")
@@ -571,8 +563,7 @@ If COMMAND is non-nil, send it to the terminal."
   (set-face-attribute 'fringe nil :background "#0f1419")
   (set-face-attribute 'region nil :background "#2f3b4a")
   (set-face-attribute 'highlight nil :background "#243447")
-  (when (facep 'hl-line)
-    (set-face-attribute 'hl-line nil :background "#18222f" :extend t))
+  (set-face-attribute 'hl-line nil :background "#18222f" :extend t)
   (set-face-attribute 'minibuffer-prompt nil :foreground "#88c0d0" :weight 'bold)
 
   (set-face-attribute 'line-number nil :foreground "#4c566a" :background "#0f1419")
