@@ -556,6 +556,7 @@ If COMMAND is non-nil, send it to the terminal."
   "Apply a dark coding theme without purple/magenta colors."
   (interactive)
   (require 'whitespace nil t)
+  (require 'hl-line)
   (mapc #'disable-theme custom-enabled-themes)
 
   (set-face-attribute 'default nil :background "#0f1419" :foreground "#d8dee9")
@@ -668,3 +669,69 @@ Do not show a vertical fill-column ruler."
 (global-set-key (kbd "C-c v 8") #'gp/toggle-code-line-length-highlighting)
 
 (message "Loaded visual profile configuration")
+
+;; Second brain: Org-roam notes in Nextcloud (database stays local in ~/.emacs.d).
+(use-package org-roam
+  :demand t
+  :custom
+  (org-roam-directory "~/Nextcloud/second_brain")
+  (org-roam-dailies-directory "daily/")
+  :bind (("C-c n f" . org-roam-node-find)
+         ("C-c n i" . org-roam-node-insert)
+         ("C-c n l" . org-roam-buffer-toggle)
+         ("C-c n d" . org-roam-dailies-capture-today))
+  :config
+  (org-roam-db-autosync-mode))
+
+(message "Loaded Org-Roam configuration")
+
+;; PARA capture templates for Org-roam (d = unfiled, p/a/r = subfolders).
+(setq org-roam-capture-templates
+      '(("d" "default (unfiled)" plain "%?"
+         :target (file+head "%<%Y%m%d%H%M%S>-${slug}.org"
+                            "#+title: ${title}\n")
+         :unnarrowed t)
+        ("p" "project" plain "%?"
+         :target (file+head "Projects/%<%Y%m%d%H%M%S>-${slug}.org"
+                            "#+title: ${title}\n")
+         :unnarrowed t)
+        ("a" "area" plain "%?"
+         :target (file+head "Areas/%<%Y%m%d%H%M%S>-${slug}.org"
+                            "#+title: ${title}\n")
+         :unnarrowed t)
+        ("r" "resource" plain "%?"
+         :target (file+head "Resources/%<%Y%m%d%H%M%S>-${slug}.org"
+                            "#+title: ${title}\n")
+         :unnarrowed t)))
+
+(message "Loaded PARA templates")
+
+;; org-web-tools: pandoc 3 rejects --no-wrap; skip the slow startup check.
+(with-eval-after-load 'org-web-tools
+  (setq org-web-tools--pandoc-no-wrap-option "--wrap=none"))
+
+;; Org-roam template w: new Resources note filled with the web page from the clipboard URL.
+(add-to-list 'org-roam-capture-templates
+             '("w" "web page (URL in clipboard)" plain
+               "%(progn (require 'org-web-tools) (org-web-tools--url-as-readable-org))"
+               :target (file+head "Resources/%<%Y%m%d%H%M%S>-${slug}.org"
+                                  "#+title: ${title}\n")
+               :unnarrowed t)
+             t)
+
+(message "Loaded Org-Web-Tools")
+
+; Deleting files from Emacs (Dired, sidebar) moves them to the macOS Trash.
+(setq delete-by-moving-to-trash t)
+
+(use-package dired-sidebar
+  :bind (("C-x C-n" . dired-sidebar-toggle-sidebar))
+  :commands (dired-sidebar-toggle-sidebar))
+
+(global-auto-revert-mode 1)
+(setq global-auto-revert-non-file-buffers t)
+(setq dired-auto-revert-buffer t)
+
+;; Show tags next to titles in the Org-roam note list (C-c n f, C-c n i).
+(setq org-roam-node-display-template
+      (concat "${title:*} " (propertize "${tags:10}" 'face 'org-tag)))
